@@ -1,14 +1,43 @@
 const core = require("@actions/core"),
   tc = require("@actions/tool-cache"),
-  exec = require("@actions/exec");
+  exec = require("@actions/exec"),
+  path = require("path");
+const { Octokit } = require("@octokit/rest");
 
 async function setup(actionConfig) {
-  // TODO: use version
-  const releaseURL = "https://github.com/viperproject/prusti-dev/releases/download/v-2023-02-20-1926/prusti-release-ubuntu.zip";
+  console.log(`downloading release ${actionConfig.version}`);
+
+  let platformId;
+  switch (process.platform) {
+  case "darwin":
+    platformId = "macos";
+    break;
+  case "linux":
+    platformId = "ubuntu";
+    break;
+  case "win32":
+    platformId = "windows";
+    break;
+  default:
+    throw `unsupported platform ${process.platform}`;
+  }
+  const releaseURL = `https://github.com/viperproject/prusti-dev/releases/download/${actionConfig.version}/prusti-release-${platformId}.zip`;
   const zipPath = await tc.downloadTool(releaseURL);
-  const extractedPath = await tc.extractZip(zipPath, "prusti-release-extracted");
-  const cachedPath = await tc.cacheDir(extractedPath, "prusti", "version");
-  core.addPath(cachedPath);
+  const extractedPath = await tc.extractZip(zipPath);
+  core.addPath(extractedPath);
+
+  await exec.exec("ls", [extractedPath]);
+  await exec.exec("chmod", ["+x", "prusti-driver"], {cwd: extractedPath});
+  await exec.exec("chmod", ["+x", "prusti-rustc"], {cwd: extractedPath});
+  await exec.exec("chmod", ["+x", "prusti-server"], {cwd: extractedPath});
+  await exec.exec("chmod", ["+x", "prusti-server-driver"], {cwd: extractedPath});
+  await exec.exec("chmod", ["+x", "cargo-prusti"], {cwd: extractedPath});
+  await exec.exec("chmod", ["+x", "viper_tools/z3/bin/z3"], {cwd: extractedPath});
+  await exec.exec("rustup", ["show"], {cwd: extractedPath});
+
+  // TODO: cache directory?
+  //const cachedPath = await tc.cacheDir(extractedPath, "prusti", "version");
+
   const exitCode = await exec.exec("prusti-rustc", ["--version"]);
   if (exitCode != 0) {
     throw `setup failed: prusti-rustc exited with non-zero code ${exitCode}`;
@@ -22,6 +51,7 @@ async function verify(actionConfig) {
   if (actionConfig.verifyCrate) {
     exitCode = await exec.exec("cargo-prusti", [
       "--message-format=json",
+      "--features", "prusti-contracts/prusti",
     ], {
       cwd: actionConfig.path,
       listeners: {
@@ -71,6 +101,12 @@ async function processMessages(actionConfig, messages) {
     // at this point we expect a message from rustc
     // see https://doc.rust-lang.org/rustc/json.html
 
+    if (message.message === "aborting due to previous error"
+      || (message.message.startsWith("aborting due to ") && message.message.endsWith(" previous errors"))) {
+      // ignore: this only adds noise to the annotations
+      continue;
+    }
+
     // classify message
     let report;
     switch (message.level) {
@@ -107,7 +143,13 @@ async function processMessages(actionConfig, messages) {
       title: message.message,
     };
     if (displaySpan) {
-      annotationProperties.file = displaySpan.file_name;
+      let pathToRoot;
+      if (actionConfig.verifyCrate) {
+        pathToRoot = actionConfig.path;
+      } else {
+        pathToRoot = path.dirname(actionConfig.path);
+      }
+      annotationProperties.file = path.join(actionConfig.annotationPath, pathToRoot, displaySpan.file_name);
       annotationProperties.startLine = displaySpan.line_start;
       annotationProperties.endLine = displaySpan.line_end;
       if (displaySpan.line_start != displaySpan.line_end) {
@@ -125,10 +167,27 @@ async function processMessages(actionConfig, messages) {
   try {
     // process input
     const actionConfig = {
-      path: core.getIntpu("path", {required: true}),
-      prustiVersion: core.getInput("version"),
+      path: core.getInput("path", {required: true}),
+      version: core.getInput("version"),
       verifyCrate: core.getBooleanInput("verify-crate"),
+      annotationPath: core.getInput("annotationPath"),
+      token: core.getInput("token"),
     };
+
+    if (actionConfig.version === "nightly") {
+      let octokit;
+      if (actionConfig.token) {
+        octokit = new Octokit({ auth: token });
+      } else {
+        octokit = new Octokit();
+      }
+      const releases = await octokit.rest.repos.listReleases({
+        owner: "viperproject",
+        repo: "prusti-dev",
+        per_page: 1,
+      });
+      actionConfig.version = releases.data[0].tag_name;
+    }
 
     // setup
     await core.group("setup Prusti", async () => await setup(actionConfig));

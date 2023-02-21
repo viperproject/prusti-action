@@ -1,4 +1,4 @@
-name: 'Prusti'
+name: 'Verify with Prusti'
 description: 'Verify Rust code using the Prusti verifier.'
 inputs:
   path:
@@ -6,11 +6,20 @@ inputs:
     required: true
   version:
     description: 'Prusti version to use, as the name of a release on GitHub, or "nightly".'
+    required: false
     default: 'nightly'
   verify-crate:
     description: 'Whether to run Prusti on a full crate (true), or a single file (false).'
-    default: 'false'
-outputs:
+    required: false
+    default: 'true'
+  annotation-path:
+    description: 'Relative path to the input crate or file from the root of the repository. Used to correctly show GitHub annotations.'
+    required: false
+    default: ''
+  token:
+    description: 'GitHub token or personal access token.'
+    required: false
+    default: ''
 runs:
   using: 'node16'
   main: 'dist/index.js'
