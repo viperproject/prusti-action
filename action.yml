@@ -1,0 +1,16 @@
+name: 'Prusti'
+description: 'Verify Rust code using the Prusti verifier.'
+inputs:
+  path:
+    description: 'Path to crate or Rust file (see `verify-crate` option) to verify.'
+    required: true
+  version:
+    description: 'Prusti version to use, as the name of a release on GitHub, or "nightly".'
+    default: 'nightly'
+  verify-crate:
+    description: 'Whether to run Prusti on a full crate (true), or a single file (false).'
+    default: 'false'
+outputs:
+runs:
+  using: 'node16'
+  main: 'dist/index.js'
